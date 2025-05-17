@@ -1,0 +1,286 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Video Text Remover</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #f2f2f2;
+      padding: 30px;
+      text-align: center;
+    }
+
+    h1 {
+      color: #333;
+    }
+
+    form, .controls, .canvas-container {
+      margin-top: 20px;
+    }
+
+    input[type="file"] {
+      padding: 6px;
+      margin-right: 10px;
+    }
+
+    button {
+      padding: 10px 18px;
+      font-size: 14px;
+      margin: 6px;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      background-color: #1976d2;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background-color: #0d47a1;
+    }
+
+    select {
+      padding: 6px;
+      font-size: 14px;
+      margin: 10px;
+    }
+
+    canvas {
+      border: 2px solid #444;
+      margin-top: 15px;
+    }
+
+    #downloadLink {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: #4caf50;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+    }
+
+    #downloadLink:hover {
+      background-color: #388e3c;
+    }
+
+    #status {
+      margin-top: 15px;
+      font-weight: bold;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🎬 AI Video Text Remover</h1>
+
+  <!-- 🔼 Upload Video -->
+  <form id="uploadForm">
+    <input type="file" name="video" id="videoInput" accept="video/*" required />
+    <button type="submit">Upload & Extract Frames</button>
+  </form>
+
+  <!-- 🖼️ Frame Selection -->
+  <div class="controls">
+    <label for="frameSelector">Select Frame:</label>
+    <select id="frameSelector" onchange="loadSelectedFrame()"></select>
+  </div>
+
+  <!-- 🖌️ Drawing Canvas -->
+  <div class="canvas-container">
+    <div style="position: relative; display: inline-block;">
+      <canvas id="imageCanvas"></canvas>
+      <canvas id="drawCanvas" style="position: absolute; left: 0; top: 0;"></canvas>
+    </div>
+  </div>
+
+  <!-- 🧩 Tools -->
+  <div class="controls">
+    <button onclick="clearMask()">🧹 Clear Mask</button>
+    <button onclick="oneClickClean()">🎬 One-Click Clean</button>
+    <button onclick="buildFinalVideo()">🎞️ Build Final Video</button>
+    <video id="videoPreview" width="640" height="360" controls style="margin-top: 20px; display: none;">
+  <source src="/final_video/final.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
+
+    <a id="downloadLink" href="#" download>⬇️ Download Final Video</a>
+  </div>
+
+  <p id="status">Waiting for action...</p>
+
+  <script>
+    const imageCanvas = document.getElementById('imageCanvas');
+    const drawCanvas = document.getElementById('drawCanvas');
+    const imageCtx = imageCanvas.getContext('2d');
+    const drawCtx = drawCanvas.getContext('2d');
+    const frameSelector = document.getElementById('frameSelector');
+    const status = document.getElementById('status');
+    const downloadLink = document.getElementById('downloadLink');
+
+    let frameList = [];
+    let drawing = false;
+
+    // Load frame list from /frames
+    async function loadFrameList() {
+      const res = await fetch('/frames');
+      frameList = await res.json();
+      frameList.sort();
+      frameSelector.innerHTML = '';
+      frameList.forEach(frame => {
+        const option = document.createElement('option');
+        option.value = frame;
+        option.textContent = frame;
+        frameSelector.appendChild(option);
+      });
+      loadSelectedFrame();
+    }
+
+    function loadSelectedFrame() {
+      const filename = frameSelector.value;
+      if (!filename) return;
+
+      const img = new Image();
+      img.onload = () => {
+        imageCanvas.width = img.width;
+        imageCanvas.height = img.height;
+        drawCanvas.width = img.width;
+        drawCanvas.height = img.height;
+
+        imageCtx.drawImage(img, 0, 0);
+        drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+      };
+      img.src = '/frames/' + filename;
+    }
+
+    drawCanvas.addEventListener('mousedown', () => drawing = true);
+    drawCanvas.addEventListener('mouseup', () => drawing = false);
+    drawCanvas.addEventListener('mousemove', (e) => {
+      if (!drawing) return;
+      const rect = drawCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      drawCtx.fillStyle = 'white';
+      drawCtx.beginPath();
+      drawCtx.arc(x, y, 10, 0, Math.PI * 2);
+      drawCtx.fill();
+    });
+
+    function clearMask() {
+      drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+    }
+
+    // 🧠 One-click clean: save → apply to all → inpaint
+    function oneClickClean() {
+      const filename = frameSelector.value;
+      if (!filename) return alert("No frame selected.");
+
+      if (!confirm("This will save the mask, apply it to all frames, and run inpainting.\nContinue?")) return;
+
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = drawCanvas.width;
+      maskCanvas.height = drawCanvas.height;
+      const maskCtx = maskCanvas.getContext('2d');
+
+      maskCtx.fillStyle = 'black';
+      maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+      maskCtx.drawImage(drawCanvas, 0, 0);
+
+      const base64 = maskCanvas.toDataURL('image/png');
+
+      status.textContent = '💾 Saving mask...';
+
+      fetch('/save-mask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageData: base64,
+          fileName: filename
+        })
+      })
+      .then(() => {
+        status.textContent = '📤 Applying mask to all frames...';
+        return fetch('/apply-mask-to-all');
+      })
+      .then(() => {
+        status.textContent = '🧠 Running inpainting...';
+        return fetch('/run-inpaint');
+      })
+      .then(res => res.text())
+      .then(msg => {
+        status.textContent = '✅ Inpainting complete!';
+        alert(msg);
+      })
+      .catch(err => {
+        status.textContent = '';
+        alert('❌ Something went wrong:\n' + err);
+      });
+    }
+
+    // 🧱 Rebuild final video
+    function buildFinalVideo() {
+  status.textContent = '🎞️ Rebuilding final video...';
+  fetch('/build-video')
+    .then(res => res.text())
+    .then(() => {
+      status.textContent = '✅ Final video ready!';
+      downloadLink.href = '/final_video/final.mp4';
+      downloadLink.style.display = 'inline-block';
+
+      const videoPreview = document.getElementById('videoPreview');
+      videoPreview.querySelector('source').src = '/final_video/final.mp4';
+      videoPreview.load(); // Refresh video element
+      videoPreview.style.display = 'block';
+    })
+    .catch(err => {
+      status.textContent = '❌ Failed to build video.';
+      alert('Build error: ' + err);
+    });
+}
+
+
+    // ⬆️ Upload handler
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const videoInput = document.getElementById('videoInput');
+      const file = videoInput.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('video', file);
+
+      status.textContent = 'Uploading and extracting frames...';
+
+      try {
+        const res = await fetch('/upload', {
+          method: 'POST',
+          body: formData
+        });
+
+        const text = await res.text();
+        status.textContent = text;
+
+        // Reload frame list
+        loadFrameList();
+        downloadLink.style.display = 'none';
+      } catch (err) {
+        status.textContent = '❌ Upload failed.';
+        alert('Error uploading video: ' + err);
+      }
+    });
+
+    // Load initial frame list
+    loadFrameList();
+  </script>
+</body>
+</html>
+
+
+
+
+
+
+

@@ -1,0 +1,218 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mask Drawing Tool</title>
+  <style>
+    body {
+      text-align: center;
+      font-family: sans-serif;
+      background: #f4f4f4;
+      margin: 40px;
+    }
+    canvas {
+      border: 2px solid #444;
+      display: block;
+      margin: 0 auto;
+    }
+    #tools {
+      margin-top: 20px;
+    }
+    #wrapper {
+      position: relative;
+      display: inline-block;
+    }
+    #imageCanvas {
+      z-index: 1;
+    }
+    #drawCanvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      z-index: 2;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>🖌️ Draw Mask to Remove Text</h2>
+
+  <div id="wrapper">
+    <canvas id="imageCanvas"></canvas>
+    <canvas id="drawCanvas"></canvas>
+  </div>
+
+  <div id="tools">
+    <button onclick="clearMask()">🧹 Clear</button>
+    <button onclick="saveToServer()">💾 Save Mask + Next</button>
+    <button onclick="runInpainting()">🧠 Run Inpainting</button>
+    <button onclick="applyToAll()">📤 Apply Mask to All Frames</button>
+    <button onclick="oneClickClean()">🎬 One-Click Clean</button>
+
+
+
+    <p id="frameNameLabel">Loading...</p>
+  </div>
+
+  <script>
+    const imageCanvas = document.getElementById('imageCanvas');
+    const drawCanvas = document.getElementById('drawCanvas');
+    const imageCtx = imageCanvas.getContext('2d');
+    const drawCtx = drawCanvas.getContext('2d');
+    const label = document.getElementById('frameNameLabel');
+
+    let frameFiles = [];       // List of frame names from backend
+    let currentIndex = 0;
+    let drawing = false;
+    let imageLoaded = false;
+
+    async function fetchFrameList() {
+      const res = await fetch('/frames');
+      frameFiles = await res.json();
+      frameFiles.sort(); // Ensure order
+      loadCurrentFrame();
+    }
+
+    function loadCurrentFrame() {
+      if (currentIndex >= frameFiles.length) {
+        alert("✅ All frames processed!");
+        return;
+      }
+
+      const filename = frameFiles[currentIndex];
+      label.textContent = 'Editing: ' + filename;
+
+      const img = new Image();
+      img.onload = () => {
+        imageCanvas.width = img.width;
+        imageCanvas.height = img.height;
+        drawCanvas.width = img.width;
+        drawCanvas.height = img.height;
+
+        imageCtx.drawImage(img, 0, 0);
+        drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+        imageLoaded = true;
+      };
+      img.src = '/frames/' + filename;
+    }
+
+    drawCanvas.addEventListener('mousedown', () => { if (imageLoaded) drawing = true; });
+    drawCanvas.addEventListener('mouseup', () => drawing = false);
+    drawCanvas.addEventListener('mousemove', (e) => {
+      if (!drawing || !imageLoaded) return;
+      const rect = drawCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      drawCtx.fillStyle = 'white';
+      drawCtx.beginPath();
+      drawCtx.arc(x, y, 10, 0, Math.PI * 2);
+      drawCtx.fill();
+    });
+
+    function clearMask() {
+      drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+    }
+
+      function applyToAll() {
+      if (!confirm("Apply this mask (frame-001.png) to all frames?")) return;
+
+    fetch('/apply-mask-to-all')
+    .then(res => res.text())
+    .then(msg => alert(msg))
+    .catch(err => alert('❌ Failed to apply mask: ' + err));
+    }
+
+    function oneClickClean() {
+    const currentMaskFilename = 'frame-001.png'; // starting point mask
+
+    if (!confirm("This will save the current mask, apply it to all frames, and run inpainting.\nContinue?")) return;
+
+  // Step 1: Create mask canvas
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = drawCanvas.width;
+  maskCanvas.height = drawCanvas.height;
+  const maskCtx = maskCanvas.getContext('2d');
+
+  // Fill black, then draw white mask
+  maskCtx.fillStyle = 'black';
+  maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+  maskCtx.drawImage(drawCanvas, 0, 0);
+
+  const base64 = maskCanvas.toDataURL('image/png');
+
+  // Step 2: Save mask to frame-001.png
+  fetch('/save-mask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      imageData: base64,
+      fileName: currentMaskFilename
+    })
+  })
+  .then(() => {
+    console.log('✅ Mask saved, now applying to all...');
+    return fetch('/apply-mask-to-all');
+  })
+  .then(res => res.text())
+  .then(msg => {
+    console.log(msg);
+    return fetch('/run-inpaint');
+  })
+  .then(res => res.text())
+  .then(finalMsg => {
+    alert(finalMsg);
+  })
+  .catch(err => {
+    alert('❌ Something failed:\n' + err);
+  });
+}
+
+
+
+    function saveToServer() {
+      const filename = frameFiles[currentIndex];
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = drawCanvas.width;
+      maskCanvas.height = drawCanvas.height;
+      const maskCtx = maskCanvas.getContext('2d');
+
+      // Fill black background
+      maskCtx.fillStyle = 'black';
+      maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+      maskCtx.drawImage(drawCanvas, 0, 0);
+
+      const base64 = maskCanvas.toDataURL('image/png');
+
+      fetch('/save-mask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageData: base64,
+          fileName: filename
+        })
+      })
+      .then(res => res.text())
+      .then(msg => {
+        console.log('✅ Mask saved:', filename);
+        currentIndex++;
+        loadCurrentFrame();
+      })
+      .catch(err => alert('❌ Failed to save: ' + err));
+    }
+
+    
+    function runInpainting() {
+  fetch('/run-inpaint')
+    .then(res => res.text())
+    .then(msg => alert(msg))
+    .catch(err => alert('❌ Failed to run inpainting: ' + err));
+}
+
+
+    // Start
+    fetchFrameList();
+  </script>
+</body>
+</html>
+
