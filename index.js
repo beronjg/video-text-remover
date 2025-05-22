@@ -194,7 +194,8 @@ app.get('/build-video', (req, res) => {
 
 
 app.get('/run-inpaint', (req, res) => {
-  const command = `"C:\\Users\\beron\\AppData\\Local\\Programs\\Python\\Python313\\python.exe" inpaint_frames.py`;
+  const command = `python3 inpaint_frames.py`;
+
 
   console.log('🧠 Running inpaint_frames.py...');
 
