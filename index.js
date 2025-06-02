@@ -211,7 +211,8 @@ app.get('/run-inpaint', (req, res) => {
     console.log('STDERR:', stderr);
 
     // Rebuild final video from edited frames
-    const buildCmd = `ffmpeg -y -framerate 25 -i edited_frames/frame-%03d.png -c:v libx264 -pix_fmt yuv420p final_video/final.mp4`;
+    const buildCmd = `./bin/ffmpeg -y -framerate 25 -i edited_frames/frame-%03d.png -c:v libx264 -pix_fmt yuv420p final_video/final.mp4`;
+
 
     exec(buildCmd, (err) => {
       if (err) {
