@@ -192,26 +192,66 @@ app.get('/build-video', (req, res) => {
   });
 });
 
-
 app.get('/run-inpaint', (req, res) => {
   const command = `python3 inpaint_frames.py`;
+  const outputDir = path.join(__dirname, 'final_video');
 
-
-  console.log('🧠 Running inpaint_frames.py...');
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir);
+  }
 
   exec(command, (error, stdout, stderr) => {
+    if (error) {
+      console.error('Inpainting error:', error);
+      return res.status(500).send('❌ Inpainting failed.');
+    }
+
+    console.log('✅ Inpainting complete.');
     console.log('STDOUT:', stdout);
     console.log('STDERR:', stderr);
 
-    if (error) {
-      console.error('❌ Inpainting error:', error);
-      return res.status(500).send('❌ Inpainting failed.\n\n' + stderr);
-    }
+    // Rebuild final video from edited frames
+    const buildCmd = `ffmpeg -y -framerate 25 -i edited_frames/frame-%03d.png -c:v libx264 -pix_fmt yuv420p final_video/final.mp4`;
 
-    console.log('✅ Inpainting complete!');
-    res.send('✅ Inpainting complete! Check /edited_frames.');
+    exec(buildCmd, (err) => {
+      if (err) {
+        console.error('Build video error:', err);
+        return res.status(500).send('✅ Inpainting done, but failed to build video.');
+      }
+
+      console.log('🎬 Final video created.');
+
+      // Send preview + download
+      res.send(`
+        ✅ Final video is ready!<br><br>
+        <a href="/final_video/final.mp4" download>⬇️ Download Final Video</a><br><br>
+        <video width="640" controls>
+          <source src="/final_video/final.mp4" type="video/mp4">
+        </video>
+      `);
+    });
   });
 });
+
+// app.get('/run-inpaint', (req, res) => {
+//   const command = `python3 inpaint_frames.py`;
+
+
+//   console.log('🧠 Running inpaint_frames.py...');
+
+//   exec(command, (error, stdout, stderr) => {
+//     console.log('STDOUT:', stdout);
+//     console.log('STDERR:', stderr);
+
+//     if (error) {
+//       console.error('❌ Inpainting error:', error);
+//       return res.status(500).send('❌ Inpainting failed.\n\n' + stderr);
+//     }
+
+//     console.log('✅ Inpainting complete!');
+//     res.send('✅ Inpainting complete! Check /edited_frames.');
+//   });
+// });
 
 
 app.get('/apply-mask-to-all', (req, res) => {
